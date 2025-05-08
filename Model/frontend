@@ -1,0 +1,322 @@
+// AI Expense Categorization Features - Frontend Integration
+
+// Function to request AI categorization for an expense
+async function categorizeExpense(description, amount, vendor = null) {
+  try {
+    const response = await fetch('/api/ai/categorize', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        description,
+        amount,
+        vendor
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to categorize expense');
+    }
+
+    const data = await response.json();
+    return {
+      category: data.category,
+      confidence: data.confidence
+    };
+  } catch (error) {
+    console.error('Error categorizing expense:', error);
+    return null;
+  }
+}
+
+// Function to submit user feedback on categorization
+async function submitCategoryFeedback(description, amount, correctCategory, vendor = null) {
+  try {
+    const response = await fetch('/api/ai/feedback', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        description,
+        amount,
+        correct_category: correctCategory,
+        vendor
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to submit feedback');
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Error submitting feedback:', error);
+    return false;
+  }
+}
+
+// Integration with expense form
+document.addEventListener('DOMContentLoaded', function() {
+  // Find the expense form and necessary fields
+  const expenseForm = document.getElementById('expense-form');
+  if (!expenseForm) return;
+
+  const descriptionField = document.getElementById('expense-description');
+  const amountField = document.getElementById('expense-amount');
+  const vendorField = document.getElementById('expense-vendor');
+  const categoryField = document.getElementById('expense-category');
+  const categoryFeedbackBtn = document.getElementById('category-feedback-btn');
+  
+  // Add a suggestion button next to the category field
+  const suggestBtn = document.createElement('button');
+  suggestBtn.type = 'button';
+  suggestBtn.className = 'btn btn-sm btn-outline-primary';
+  suggestBtn.textContent = 'Suggest Category';
+  suggestBtn.id = 'suggest-category-btn';
+  
+  // Add confidence indicator
+  const confidenceIndicator = document.createElement('div');
+  confidenceIndicator.className = 'confidence-indicator mt-1 small text-muted';
+  confidenceIndicator.style.display = 'none';
+  
+  // Insert elements into the form
+  if (categoryField && categoryField.parentNode) {
+    categoryField.parentNode.appendChild(suggestBtn);
+    categoryField.parentNode.appendChild(confidenceIndicator);
+  }
+  
+  // Add event listener to suggestion button
+  suggestBtn.addEventListener('click', async function() {
+    if (!descriptionField.value || !amountField.value) {
+      alert('Please enter a description and amount');
+      return;
+    }
+    
+    // Show loading state
+    suggestBtn.disabled = true;
+    suggestBtn.textContent = 'Analyzing...';
+    
+    const result = await categorizeExpense(
+      descriptionField.value,
+      parseFloat(amountField.value),
+      vendorField ? vendorField.value : null
+    );
+    
+    // Reset button state
+    suggestBtn.disabled = false;
+    suggestBtn.textContent = 'Suggest Category';
+    
+    if (result) {
+      // Set the category value
+      categoryField.value = result.category;
+      
+      // Show confidence
+      confidenceIndicator.style.display = 'block';
+      
+      // Calculate confidence level for display
+      let confidenceText, confidenceClass;
+      if (result.confidence >= 0.8) {
+        confidenceText = 'High confidence';
+        confidenceClass = 'text-success';
+      } else if (result.confidence >= 0.5) {
+        confidenceText = 'Medium confidence';
+        confidenceClass = 'text-warning';
+      } else {
+        confidenceText = 'Low confidence';
+        confidenceClass = 'text-danger';
+      }
+      
+      confidenceIndicator.textContent = `${confidenceText} (${Math.round(result.confidence * 100)}%)`;
+      confidenceIndicator.className = `confidence-indicator mt-1 small ${confidenceClass}`;
+      
+      // Highlight the field briefly to show it changed
+      categoryField.classList.add('bg-light');
+      setTimeout(() => {
+        categoryField.classList.remove('bg-light');
+      }, 1000);
+    }
+  });
+  
+  // Add change event to description field for real-time suggestions
+  // (only if description and amount are filled)
+  descriptionField.addEventListener('blur', async function() {
+    if (descriptionField.value && amountField.value && categoryField.value === '') {
+      // Only suggest if category is empty
+      suggestBtn.click();
+    }
+  });
+  
+  // Add event listener to form submission
+  expenseForm.addEventListener('submit', function(event) {
+    // Check if AI suggested the category
+    if (confidenceIndicator.style.display === 'block') {
+      // Store the fact that this was AI-suggested
+      const aiSuggestedInput = document.createElement('input');
+      aiSuggestedInput.type = 'hidden';
+      aiSuggestedInput.name = 'ai_suggested';
+      aiSuggestedInput.value = 'true';
+      expenseForm.appendChild(aiSuggestedInput);
+    }
+  });
+});
+
+// Add feedback button to expense table rows
+function addFeedbackButtonsToExpenseTable() {
+  const expenseTable = document.querySelector('.expense-table');
+  if (!expenseTable) return;
+  
+  const rows = expenseTable.querySelectorAll('tbody tr');
+  
+  rows.forEach(row => {
+    // Get expense data from the row
+    const description = row.querySelector('.expense-description')?.textContent;
+    const amount = parseFloat(row.querySelector('.expense-amount')?.textContent.replace(/[^0-9.-]+/g, '') || '0');
+    const category = row.querySelector('.expense-category')?.textContent;
+    
+    // Create feedback button
+    const actionsCell = row.querySelector('.actions-cell') || row.insertCell(-1);
+    actionsCell.className = 'actions-cell';
+    
+    const feedbackBtn = document.createElement('button');
+    feedbackBtn.className = 'btn btn-sm btn-outline-secondary ml-1';
+    feedbackBtn.innerHTML = '<i class="fas fa-robot"></i>';
+    feedbackBtn.title = 'Fix AI category';
+    feedbackBtn.addEventListener('click', function() {
+      showCategoryFeedbackModal(description, amount, category);
+    });
+    
+    actionsCell.appendChild(feedbackBtn);
+  });
+}
+
+// Create a modal for category feedback
+function showCategoryFeedbackModal(description, amount, currentCategory) {
+  // Create modal elements
+  const modalOverlay = document.createElement('div');
+  modalOverlay.className = 'modal-overlay';
+  modalOverlay.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center;';
+  
+  const modalContent = document.createElement('div');
+  modalContent.className = 'modal-content';
+  modalContent.style.cssText = 'background: white; padding: 20px; border-radius: 8px; width: 90%; max-width: 500px;';
+  
+  // Add modal header
+  const modalHeader = document.createElement('h4');
+  modalHeader.textContent = 'Correct Category';
+  
+  // Add expense info
+  const expenseInfo = document.createElement('p');
+  expenseInfo.innerHTML = `<strong>Description:</strong> ${description}<br><strong>Amount:</strong> $${amount.toFixed(2)}<br><strong>Current Category:</strong> ${currentCategory}`;
+  
+  // Add category selector
+  const categoryLabel = document.createElement('label');
+  categoryLabel.textContent = 'Correct Category:';
+  categoryLabel.htmlFor = 'correct-category';
+  
+  const categorySelect = document.createElement('select');
+  categorySelect.id = 'correct-category';
+  categorySelect.className = 'form-control mt-2';
+  
+  // Fetch available categories
+  fetch('/api/ai/categories')
+    .then(response => response.json())
+    .then(data => {
+      data.categories.forEach(category => {
+        const option = document.createElement('option');
+        option.value = category;
+        option.textContent = category;
+        if (category === currentCategory) {
+          option.selected = true;
+        }
+        categorySelect.appendChild(option);
+      });
+    })
+    .catch(error => {
+      console.error('Error fetching categories:', error);
+      // Add current category as fallback
+      const option = document.createElement('option');
+      option.value = currentCategory;
+      option.textContent = currentCategory;
+      option.selected = true;
+      categorySelect.appendChild(option);
+    });
+  
+  // Add buttons
+  const buttonContainer = document.createElement('div');
+  buttonContainer.className = 'button-container d-flex justify-content-end mt-3';
+  
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-secondary mr-2';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.addEventListener('click', function() {
+    document.body.removeChild(modalOverlay);
+  });
+  
+  const submitBtn = document.createElement('button');
+  submitBtn.className = 'btn btn-primary';
+  submitBtn.textContent = 'Submit Feedback';
+  submitBtn.addEventListener('click', async function() {
+    const selectedCategory = categorySelect.value;
+    
+    // Only submit if category changed
+    if (selectedCategory !== currentCategory) {
+      const success = await submitCategoryFeedback(
+        description,
+        amount,
+        selectedCategory
+      );
+      
+      if (success) {
+        // Show success message
+        const successMessage = document.createElement('div');
+        successMessage.className = 'alert alert-success mt-2';
+        successMessage.textContent = 'Thank you for your feedback!';
+        modalContent.appendChild(successMessage);
+        
+        // Close modal after delay
+        setTimeout(() => {
+          document.body.removeChild(modalOverlay);
+        }, 1500);
+      }
+    } else {
+      // No change, just close
+      document.body.removeChild(modalOverlay);
+    }
+  });
+  
+  buttonContainer.appendChild(cancelBtn);
+  buttonContainer.appendChild(submitBtn);
+  
+  // Assemble modal
+  modalContent.appendChild(modalHeader);
+  modalContent.appendChild(expenseInfo);
+  modalContent.appendChild(categoryLabel);
+  modalContent.appendChild(categorySelect);
+  modalContent.appendChild(buttonContainer);
+  modalOverlay.appendChild(modalContent);
+  
+  // Add to document
+  document.body.appendChild(modalOverlay);
+}
+
+// Initialize AI features
+document.addEventListener('DOMContentLoaded', function() {
+  // Add feedback buttons to expense table
+  addFeedbackButtonsToExpenseTable();
+  
+  // Add feedback buttons to new expenses as they're added
+  const expenseTable = document.querySelector('.expense-table');
+  if (expenseTable) {
+    const observer = new MutationObserver(function(mutations) {
+      mutations.forEach(function(mutation) {
+        if (mutation.type === 'childList') {
+          addFeedbackButtonsToExpenseTable();
+        }
+      });
+    });
+    
+    observer.observe(expenseTable.querySelector('tbody'), { childList: true });
+  }
+});
